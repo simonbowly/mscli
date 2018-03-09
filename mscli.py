@@ -15,6 +15,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from tabulate import tabulate
 
 
+__version__ = '0.1.0'
+
+
 @click.command()
 @click.option('--host', type=str)
 @click.option('--port', type=int)
