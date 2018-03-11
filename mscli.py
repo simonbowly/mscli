@@ -18,17 +18,75 @@ from tabulate import tabulate
 __version__ = '0.1.0'
 
 
+def get_all_tables(conn):
+    databases = [
+        entry[0] for entry in
+        conn.execute('SELECT name FROM sys.databases')]
+    query = ' union all '.join(
+        f'SELECT * FROM {database}.INFORMATION_SCHEMA.tables'
+        for database in databases
+        if database not in {'master', 'tempdb', 'model', 'msdb'})
+    run_query(conn, query)
+
+
+def run_query(conn, stmt):
+    try:
+        # Run query and display result.
+        result = conn.execute(stmt)
+        if result.returns_rows:
+            rows = list(result)
+            columns = result.keys()
+            output_str = str(tabulate(rows, columns, tablefmt='psql'))
+            if len(rows) > 10:
+                click.echo_via_pager(output_str)
+            else:
+                click.echo(output_str)
+        else:
+            click.echo('"result" does not return rows. Launching IPy to inspect ...')
+            from IPython import embed
+            embed()
+    except SQLAlchemyError as exec_error:
+        # Error in the statement execution.
+        code, msg = exec_error.orig.args
+        msg = msg.decode()
+        click.echo(f'Error code {code}.\n{msg}')
+
+
+def process_input(conn, stmt):
+    stmt = stmt.strip()
+    if stmt == '':
+        return
+    elif stmt.startswith('\\'):
+        command, *args = stmt[1:].split()
+        if command == 'databases':
+            query = 'SELECT name FROM sys.databases'
+            click.echo(query)
+            run_query(conn, query)
+        elif command == 'tables':
+            if len(args) == 0:
+                get_all_tables(conn)
+            else:
+                database = args[0]
+                query = f'SELECT * FROM {database}.INFORMATION_SCHEMA.tables'
+                click.echo(query)
+                run_query(conn, query)
+        else:
+            click.echo(f'Unknown command: {stmt}')
+    else:
+        run_query(conn, stmt)
+
+
 @click.command()
-@click.option('--host', type=str)
-@click.option('--port', type=int)
-@click.option('--username', type=str)
-@click.option('--password', type=str)
+@click.option('--host', type=str, prompt=True)
+@click.option('--port', type=int, prompt=True)
+@click.option('--username', type=str, prompt=True)
+@click.option('--password', type=str, prompt=True, hide_input=True)
 def cli(host, port, username, password):
 
     # Prompt configuration.
     sql_completer = WordCompleter([
-        'SELECT', 'FROM', 'WHERE', 'ORDER BY', 'TOP',
-        'INFORMATION_SCHEMA'
+        'SELECT', 'TOP' 'FROM', 'WHERE', 'ORDER BY',
+        '\\databases', '\\tables',
         ], ignore_case=True)
     config_dir = appdirs.user_config_dir('mscli')
     with contextlib.suppress(FileExistsError):
@@ -39,48 +97,23 @@ def cli(host, port, username, password):
         auto_suggest=AutoSuggestFromHistory(),
         completer=sql_completer,
         lexer=SqlLexer,
-        # multiline=True
+        multiline=True,
         )
 
-    # Connection configuration.
-    engine = create_engine(f'mssql+pymssql://{username}:{password}@{host}:{port}/')
-
-    # REPL.
+    # Connect and start REPL.
     try:
+        engine = create_engine(
+            f'mssql+pymssql://{username}:{password}@{host}:{port}/')
         with engine.connect() as conn:
             try:
                 while 1:
                     stmt = prompt('> ', **prompt_kwargs)
-                    if stmt.strip() == '':
-                        continue
-                    try:
-                        # Run query and display result.
-                        result = conn.execute(stmt)
-                        if result.returns_rows:
-                            rows = list(result)
-                            columns = result.keys()
-                            output_str = str(tabulate(rows, columns, tablefmt='psql'))
-                            if len(rows) > 10:
-                                click.echo_via_pager(output_str)
-                            else:
-                                click.echo(output_str)
-                        else:
-                            click.echo('"result" does not return rows. Launching IPy to inspect ...')
-                            from IPython import embed
-                            embed()
-                    except SQLAlchemyError as exec_error:
-                        # Errors in the statement execution.
-                        code, msg = exec_error.orig.args
-                        msg = msg.decode()
-                        click.echo(f'Error code {code}.\n{msg}')
-
+                    process_input(conn, stmt)
             except (KeyboardInterrupt, EOFError) as bailout_error:
                 click.echo('Exiting...')
-
         click.echo('Connection closed.')
-
     except SQLAlchemyError as connect_error:
-        # Errors in establishing a connection at launch.
+        # Error in establishing a connection at launch.
         code, msg = connect_error.orig.args[0]
         msg = msg.decode()
         click.echo(f'Error code {code}.\n{msg}')
