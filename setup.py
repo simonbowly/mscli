@@ -9,7 +9,7 @@ with open('README.rst') as readme_file:
 requirements = [
     'appdirs>=1.4.3',
     'click>=6.7',
-    'prompt-toolkit>=1.0.15',
+    'prompt-toolkit>=1.0.15,<2.0',
     'pygments>=2.2.0',
     'pymssql>=2.1.3',
     'sqlalchemy>=1.2.5',
